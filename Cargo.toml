@@ -1,6 +1,6 @@
 [package]
 name = "trashy"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 description = "Plans, prompts, and executes a cleanse of your trashy filesystem(s)"
 license = "MIT"
