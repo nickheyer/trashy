@@ -1,0 +1,16 @@
+pkgname=trashy-bin
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc="Plans, prompts, and executes a cleanse of your trashy filesystem(s)"
+arch=('x86_64')
+url="https://github.com/nickheyer/trashy"
+license=('MIT')
+provides=('trashy')
+conflicts=('trashy')
+source=("trashy-${pkgver}-x86_64-linux.tar.gz::https://github.com/nickheyer/trashy/releases/download/v${pkgver}/trashy-${pkgver}-x86_64-linux.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  install -Dm755 "${srcdir}/trashy" "${pkgdir}/usr/bin/trashy"
+  install -Dm644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

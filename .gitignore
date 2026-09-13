@@ -427,3 +427,7 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Rust
+/target
+Cargo.lock.bak

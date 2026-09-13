@@ -1,0 +1,43 @@
+- { id: cargo-target,   name: Cargo build dirs,        glob: target,                         markers: ["../Cargo.toml", CACHEDIR.TAG],           note: cargo build regenerates them }
+- { id: node-modules,   name: node_modules,            glob: node_modules,                   markers: ["../package.json"],                       note: npm/pnpm/yarn install regenerates them }
+- { id: py-venv,        name: Python virtualenvs,      glob: "{.venv,venv,.virtualenv}",     markers: [pyvenv.cfg],                              risk: low, note: recreate with uv sync / python -m venv }
+- { id: py-caches,      name: Python caches,           glob: "{__pycache__,.pytest_cache,.mypy_cache,.ruff_cache,.tox,.nox,.hypothesis,.ipynb_checkpoints}", note: regenerated on the next run }
+- { id: js-caches,      name: JS framework caches,     glob: "{.next,.nuxt,.turbo,.parcel-cache,.angular,.svelte-kit,.vite,.cache}", markers: ["../package.json"], risk: low, note: rebuilt by the dev server / bundler }
+- { id: js-dist,        name: JS build output,         glob: "{dist,build,out,.output}",     markers: ["../package.json"],                       risk: medium, note: rebuilt by the build script }
+- { id: cmake-build,    name: CMake build dirs,        glob: "{build,cmake-build-*,_build}", markers: [CMakeCache.txt],                          note: reconfigure with cmake }
+- { id: gradle,         name: Gradle build dirs,       glob: "{build,.gradle}",              markers: ["../build.gradle|../build.gradle.kts|../settings.gradle|../settings.gradle.kts"], risk: low, note: gradle rebuilds them }
+- { id: maven-target,   name: Maven build dirs,        glob: target,                         markers: ["../pom.xml"],                            risk: low, note: mvn package rebuilds them }
+- { id: dotnet,         name: .NET build output,       glob: "{bin,obj}",                    markers: ["../*.csproj|../*.fsproj|../*.vbproj"],   risk: low, note: dotnet build rebuilds them }
+- { id: zig,            name: Zig caches,              glob: "{.zig-cache,zig-cache,zig-out}", markers: ["../build.zig"],                        note: zig build rebuilds them }
+- { id: elixir,         name: Elixir build/deps,       glob: "{_build,deps}",                markers: ["../mix.exs"],                            risk: low, note: mix deps.get && mix compile }
+- { id: haskell,        name: Haskell build dirs,      glob: "{.stack-work,dist-newstyle}",  markers: ["../stack.yaml|../*.cabal|../cabal.project"], risk: low, note: stack/cabal build rebuilds them }
+- { id: terraform,      name: Terraform providers,     glob: .terraform,                     markers: ["../*.tf"],                               risk: low, note: terraform init re-downloads them }
+- { id: cachedir-tag,   name: Tagged cache dirs,       glob: "*",                            markers: [CACHEDIR.TAG],                            note: marked as a cache by the owning tool }
+- { id: os-junk,        name: OS junk files,           kind: file, glob: "{.DS_Store,Thumbs.db,desktop.ini,._*}", note: metadata litter }
+- { id: editor-junk,    name: Editor leftovers,        kind: file, glob: "{*.swp,*.swo,*~,.#*,*.orig,*.rej}", risk: low, note: swap and merge leftovers }
+- { id: partial-dl,     name: Partial downloads,       kind: file, glob: "{*.part,*.crdownload,*.partial,*.!qB,*.aria2}", min_age: 7, risk: low, note: abandoned for a week }
+- { id: core-dumps,     name: Core dumps,              kind: file, glob: "{core,core.[0-9]*}", min_size: 1M, risk: low, note: crash dumps }
+- { id: rotated-logs,   name: Rotated logs,            kind: file, glob: "{*.log.[0-9]*,*.log.gz,*.[0-9].gz,*.log.old}", risk: low, note: already rotated away }
+- { id: big-logs,       name: Huge logs,               kind: file, glob: "*.log", min_size: 100M, risk: medium, note: still being written to, maybe }
+- { id: trash,          name: Trash bins,              kind: path, glob: "~/.local/share/Trash|{mount}/.Trash-*", permanent: true, note: already thrown away }
+- { id: xdg-cache,      name: "~/.cache",              kind: path, glob: "~/.cache", children: true, risk: low, note: apps rebuild caches on demand }
+- { id: npm-cache,      name: npm cache,               kind: path, glob: "~/.npm/_cacache", note: re-fetched on install }
+- { id: pnpm-store,     name: pnpm store,              kind: path, glob: "~/.local/share/pnpm/store", risk: low, note: re-fetched on install }
+- { id: cargo-registry, name: Cargo registry,          kind: path, glob: "~/.cargo/registry|~/.cargo/git", risk: low, note: re-fetched on build }
+- { id: rustup-tmp,     name: rustup downloads,        kind: path, glob: "~/.rustup/downloads|~/.rustup/tmp", note: transient installer files }
+- { id: go-mod,         name: Go module cache,         kind: path, glob: "~/go/pkg/mod", risk: low, cmd: go clean -modcache, note: re-fetched on build }
+- { id: gradle-cache,   name: Gradle caches,           kind: path, glob: "~/.gradle/caches|~/.gradle/wrapper/dists", risk: low, note: re-fetched on build }
+- { id: maven-repo,     name: Maven repository,        kind: path, glob: "~/.m2/repository", risk: low, note: re-fetched on build }
+- { id: electron,       name: Electron/Chromium caches, kind: path, glob: "~/.config/*/Cache|~/.config/*/Code Cache|~/.config/*/GPUCache|~/.config/*/DawnCache|~/.config/*/Service Worker/CacheStorage|~/.config/*/CachedData", note: browser-style caches }
+- { id: thumbnails,     name: Thumbnails,              kind: path, glob: "~/.thumbnails", note: regenerated by file managers }
+- { id: steam-shaders,  name: Steam shader cache,      kind: path, glob: "~/.local/share/Steam/steamapps/shadercache", note: recompiled on launch }
+- { id: downloads,      name: Stale downloads,         kind: path, glob: "~/Downloads", children: true, min_age: 180, risk: medium, note: untouched for six months }
+- { id: var-tmp,        name: Stale /var/tmp,          kind: path, glob: /var/tmp, children: true, min_age: 30, risk: low, note: untouched for a month }
+- { id: coredumpctl,    name: systemd core dumps,      kind: path, glob: /var/lib/systemd/coredump, children: true, note: crash dumps }
+- { id: journal,        name: systemd journal,         kind: path, glob: /var/log/journal, risk: low, cmd: sudo journalctl --vacuum-size=200M, note: keeps the newest 200M }
+- { id: pacman-cache,   name: pacman package cache,    kind: path, glob: /var/cache/pacman/pkg, risk: low, cmd: sudo pacman -Sc --noconfirm, note: keeps installed versions }
+- { id: apt-cache,      name: apt package cache,       kind: path, glob: /var/cache/apt/archives, risk: low, cmd: sudo apt-get clean, note: re-downloaded on install }
+- { id: dnf-cache,      name: dnf package cache,       kind: path, glob: /var/cache/dnf, risk: low, cmd: sudo dnf clean all, note: re-downloaded on install }
+- { id: docker,         name: Docker unused data,      kind: path, glob: /var/lib/docker, risk: medium, cmd: docker system prune -af, note: prunes stopped containers and unused images }
+- { id: podman,         name: Podman unused data,      kind: path, glob: "~/.local/share/containers/storage", risk: medium, cmd: podman system prune -af, note: prunes stopped containers and unused images }
+- { id: flatpak,        name: Flatpak unused runtimes, kind: path, glob: /var/lib/flatpak, risk: low, cmd: flatpak uninstall --unused -y, note: removes runtimes nothing depends on }
