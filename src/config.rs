@@ -26,6 +26,7 @@ pub struct Recipe {
     pub kind: Kind,
     pub glob: String,
     pub markers: Vec<String>,
+    pub not_under: Vec<String>,
     pub risk: Risk,
     pub note: String,
     pub children: bool,
@@ -39,7 +40,7 @@ pub struct Recipe {
 
 impl Default for Recipe {
     fn default() -> Self {
-        Self { id: String::new(), name: String::new(), kind: Kind::Dir, glob: String::new(), markers: vec![], risk: Risk::Safe, note: String::new(), children: false, min_size: 0, min_age: 0, cmd: None, permanent: false, enabled: true }
+        Self { id: String::new(), name: String::new(), kind: Kind::Dir, glob: String::new(), markers: vec![], not_under: vec![], risk: Risk::Safe, note: String::new(), children: false, min_size: 0, min_age: 0, cmd: None, permanent: false, enabled: true }
     }
 }
 
@@ -55,15 +56,18 @@ pub struct Config {
     pub mode: Mode,
     pub top_files: usize,
     pub exclude: Vec<String>,
+    pub protect: Vec<String>,
     pub dupes: Dupes,
     pub recipes: Vec<Recipe>,
     #[serde(skip)]
     pub path: PathBuf,
 }
 
+pub const PROTECT: &[&str] = &["/usr", "/etc", "/opt", "/var", "/boot", "/bin", "/sbin", "/lib", "/lib64", "/srv", "/nix", "/snap", "~/.*", "~/n", "~/go/pkg", "~/snap"];
+
 impl Default for Config {
     fn default() -> Self {
-        Self { targets: BTreeMap::new(), mode: Mode::Trash, top_files: 500, exclude: vec![], dupes: Dupes::default(), recipes: vec![], path: PathBuf::new() }
+        Self { targets: BTreeMap::new(), mode: Mode::Trash, top_files: 500, exclude: vec![], protect: PROTECT.iter().map(|s| s.to_string()).collect(), dupes: Dupes::default(), recipes: vec![], path: PathBuf::new() }
     }
 }
 
@@ -72,10 +76,10 @@ const HEADER: &str = "\
 # targets:  mount point -> targeted (the cwd's filesystem is targeted unless set false here)
 # mode:     trash | delete
 # exclude:  path globs never scanned
+# protect:  paths (globs, ~ allowed) where dir/file recipes and duplicate detection never match
 # recipes:  extra/overriding recipes (same id as a builtin replaces it; enabled: false disables it)
 #   id, name, kind (dir|file|path), glob, markers ([\"../Cargo.toml\", \"CACHEDIR.TAG\"], alternatives split by |),
-#   risk (safe|low|medium), note, children (path kind: offer each child), min_size, min_age (days),
-#   cmd (run instead of deleting), permanent (never trash), enabled
+#  risk (safe|low|medium), note, children (path kind: offer each child), min_size, min_age (days), cmd (run instead of deleting), permanent (never trash), enabled
 ";
 
 impl Config {
@@ -94,6 +98,7 @@ impl Config {
                 globset::Glob::new(g.trim_start_matches("../")).with_context(|| format!("recipe {}: bad glob {g:?}", r.id))?;
             }
         }
+        for g in &c.protect { globset::Glob::new(g).with_context(|| format!("protect: bad glob {g:?}"))?; }
         if !c.path.exists() { c.save()?; }
         Ok(c)
     }

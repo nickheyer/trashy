@@ -1,5 +1,5 @@
 use crate::config::{Config, Kind, Recipe};
-use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use rayon::prelude::*;
 use std::{
     cmp::Reverse,
@@ -121,28 +121,35 @@ impl Marker {
     }
 }
 
-struct Rules { dir_set: GlobSet, dir_idx: Vec<(usize, Vec<Vec<Marker>>)>, file_set: GlobSet, file_idx: Vec<usize>, exclude: GlobSet }
+fn under(p: Option<&Path>, names: &[OsString]) -> bool {
+    !names.is_empty() && p.is_some_and(|p| p.components().any(|c| names.iter().any(|n| **n == *c.as_os_str())))
+}
+
+struct Rules { dir_set: GlobSet, dir_idx: Vec<(usize, Vec<Vec<Marker>>, Vec<OsString>)>, file_set: GlobSet, file_idx: Vec<(usize, Vec<OsString>)>, exclude: GlobSet, protect: GlobSet }
 
 impl Rules {
-    fn new(recipes: &[Recipe], exclude: &[String]) -> Self {
-        let (mut db, mut fb, mut eb) = (GlobSetBuilder::new(), GlobSetBuilder::new(), GlobSetBuilder::new());
+    fn new(recipes: &[Recipe], exclude: &[String], protect: &[String]) -> Self {
+        let (mut db, mut fb, mut eb, mut pb) = (GlobSetBuilder::new(), GlobSetBuilder::new(), GlobSetBuilder::new(), GlobSetBuilder::new());
         let (mut dir_idx, mut file_idx) = (vec![], vec![]);
         for (i, r) in recipes.iter().enumerate() {
             let Ok(g) = Glob::new(&r.glob) else { continue };
+            let not_under: Vec<OsString> = r.not_under.iter().map(OsString::from).collect();
             match r.kind {
-                Kind::Dir => { db.add(g); dir_idx.push((i, r.markers.iter().map(|m| m.split('|').map(Marker::parse).collect()).collect())); }
-                Kind::File => { fb.add(g); file_idx.push(i); }
+                Kind::Dir => { db.add(g); dir_idx.push((i, r.markers.iter().map(|m| m.split('|').map(Marker::parse).collect()).collect(), not_under)); }
+                Kind::File => { fb.add(g); file_idx.push((i, not_under)); }
                 Kind::Path => {}
             }
         }
         for e in exclude { if let Ok(g) = Glob::new(e) { eb.add(g); } }
+        for p in protect.iter().filter_map(|p| home(p)) { if let Ok(g) = GlobBuilder::new(&p.to_string_lossy()).literal_separator(true).build() { pb.add(g); } }
         let build = |b: GlobSetBuilder| b.build().unwrap_or_else(|_| GlobSet::empty());
-        Self { dir_set: build(db), dir_idx, file_set: build(fb), file_idx, exclude: build(eb) }
+        Self { dir_set: build(db), dir_idx, file_set: build(fb), file_idx, exclude: build(eb), protect: build(pb) }
     }
+    fn protected(&self, p: &Path) -> bool { p.ancestors().any(|a| self.protect.is_match(a)) }
     fn dir_hit(&self, dir: &Path, name: &OsStr, names: &[(OsString, bool)], pnames: &[(OsString, bool)]) -> Option<usize> {
         self.dir_set.matches(Path::new(name)).into_iter().find_map(|i| {
-            let (r, markers) = &self.dir_idx[i];
-            markers.iter().all(|alts| alts.iter().any(|m| m.check(dir, names, pnames))).then_some(*r)
+            let (r, markers, not_under) = &self.dir_idx[i];
+            (!under(dir.parent(), not_under) && markers.iter().all(|alts| alts.iter().any(|m| m.check(dir, names, pnames)))).then_some(*r)
         })
     }
 }
@@ -169,19 +176,20 @@ impl Acc {
     fn merge(mut self, o: Acc) -> Self { self.kids.extend(o.kids); self.own += o.own; self.files += o.files; self.mtime = self.mtime.max(o.mtime); self }
 }
 
-fn scan_dir(cx: &Cx, path: PathBuf, name: OsString, pnames: &[(OsString, bool)], in_hit: bool) -> Node {
+fn scan_dir(cx: &Cx, path: PathBuf, name: OsString, pnames: &[(OsString, bool)], in_hit: bool, prot: bool) -> Node {
     let mut node = Node { name: name.into_boxed_os_str(), size: 0, own: 0, files: 0, mtime: 0, kids: vec![], err: false };
     let Ok(rd) = fs::read_dir(&path) else { node.err = true; cx.prog.errs.fetch_add(1, Relaxed); return node };
     cx.prog.dirs.fetch_add(1, Relaxed);
     *cx.prog.cur.lock().unwrap() = path.clone();
     let ents: Vec<(OsString, bool)> = rd.flatten().map(|e| (e.file_name(), e.file_type().is_ok_and(|t| t.is_dir()))).collect();
-    let hit = if in_hit { None } else { cx.rules.dir_hit(&path, &node.name, &ents, pnames) };
+    let prot = prot || cx.rules.protect.is_match(&path);
+    let hit = if in_hit || prot { None } else { cx.rules.dir_hit(&path, &node.name, &ents, pnames) };
     let inner = in_hit || hit.is_some();
     let acc = ents.par_iter().map(|(n, is_dir)| {
         let q = path.join(n);
         if *is_dir {
             if cx.mounts.contains(&q) || cx.rules.exclude.is_match(&q) { return Part::None; }
-            return Part::Dir(scan_dir(cx, q, n.clone(), &ents, inner));
+            return Part::Dir(scan_dir(cx, q, n.clone(), &ents, inner, prot));
         }
         let Ok(m) = fs::symlink_metadata(&q) else { cx.prog.errs.fetch_add(1, Relaxed); return Part::None };
         let mut sz = m.blocks() * 512;
@@ -190,12 +198,13 @@ fn scan_dir(cx: &Cx, path: PathBuf, name: OsString, pnames: &[(OsString, bool)],
         cx.prog.files.fetch_add(1, Relaxed);
         cx.prog.bytes.fetch_add(sz, Relaxed);
         if sz > cx.big_min.load(Relaxed) { cx.push_big(sz, mt, &q); }
-        if cx.dup_min > 0 && sz >= cx.dup_min && m.is_file() { cx.dup.lock().unwrap().push((m.len(), m.dev(), m.ino(), q.clone())); }
-        if !inner {
+        if cx.dup_min > 0 && !prot && sz >= cx.dup_min && m.is_file() { cx.dup.lock().unwrap().push((m.len(), m.dev(), m.ino(), q.clone())); }
+        if !inner && !prot {
             for i in cx.rules.file_set.matches(Path::new(n)) {
-                let r = &cx.recipes[cx.rules.file_idx[i]];
-                if sz >= r.min_size && (r.min_age == 0 || cx.now - mt >= r.min_age as i64 * 86400) {
-                    cx.hits.lock().unwrap().push(Hit { recipe: cx.rules.file_idx[i], path: q.clone(), size: sz, mtime: mt, files: 1 });
+                let (ri, not_under) = &cx.rules.file_idx[i];
+                let r = &cx.recipes[*ri];
+                if !under(Some(&path), not_under) && sz >= r.min_size && (r.min_age == 0 || cx.now - mt >= r.min_age as i64 * 86400) {
+                    cx.hits.lock().unwrap().push(Hit { recipe: *ri, path: q.clone(), size: sz, mtime: mt, files: 1 });
                     break;
                 }
             }
@@ -226,10 +235,12 @@ pub fn list_dir(abs: &Path) -> Vec<(OsString, u64, i64)> {
     }).collect()).unwrap_or_default()
 }
 
-fn expand(pat: &str, mount: &Path) -> Option<PathBuf> {
-    let p = pat.replace("{mount}", mount.to_str()?);
-    Some(match p.strip_prefix('~') { Some(r) => dirs::home_dir()?.join(r.trim_start_matches('/')), None => p.into() })
+fn home(pat: &str) -> Option<PathBuf> {
+    let p = pat.trim_end_matches('/');
+    Some(match p.strip_prefix('~') { Some(r) => dirs::home_dir()?.join(r.trim_start_matches('/')), None => PathBuf::from(if p.is_empty() { "/" } else { p }) })
 }
+
+fn expand(pat: &str, mount: &Path) -> Option<PathBuf> { home(&pat.replace("{mount}", mount.to_str()?)) }
 
 fn resolve<'a>(mount: &Path, root: &'a Node, pat: &str) -> Vec<(PathBuf, &'a Node)> {
     let Some(p) = expand(pat, mount) else { return vec![] };
@@ -297,11 +308,11 @@ fn dupes(mut cands: Vec<(u64, u64, u64, PathBuf)>, prog: &Progress) -> Vec<Dupe>
 pub fn scan(mount: &Path, cfg: &Config, recipes: &[Recipe], mounts: &HashSet<PathBuf>, prog: Arc<Progress>) -> Scan {
     let t0 = Instant::now();
     let cx = Cx {
-        rules: Rules::new(recipes, &cfg.exclude), recipes, mounts, prog: prog.clone(), now: now(),
+        rules: Rules::new(recipes, &cfg.exclude, &cfg.protect), recipes, mounts, prog: prog.clone(), now: now(),
         seen: Mutex::default(), hits: Mutex::default(), big: Mutex::default(), big_min: AtomicU64::new(0), top: cfg.top_files.max(1),
         dup: Mutex::default(), dup_min: if cfg.dupes.enabled { cfg.dupes.min_size.max(1) } else { 0 },
     };
-    let root = scan_dir(&cx, mount.to_path_buf(), mount.as_os_str().to_owned(), &[], false);
+    let root = scan_dir(&cx, mount.to_path_buf(), mount.as_os_str().to_owned(), &[], false, cx.rules.protected(mount));
     let mut hits = cx.hits.into_inner().unwrap();
     hits.extend(path_hits(mount, &root, recipes, cx.now));
     hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.recipe.cmp(&b.recipe)));

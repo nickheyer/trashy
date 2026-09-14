@@ -31,6 +31,7 @@ targets: { /: true, /mnt/primary: true, /mnt/backups: false }   # mount points/d
 mode: trash                                                     # trash || delete
 top_files: 500                                                  # size of the Files tab
 exclude: ["/mnt/primary/vm/**"]                                 # path globs never scanned
+protect: [/usr, /etc, /opt, /var, /boot, /bin, /sbin, /lib, /lib64, /srv, /nix, /snap]  
 dupes: { enabled: true, min_size: 1M }
 recipes:
   - { id: yay-cache, name: yay cache, kind: path, glob: "~/.cache/yay", risk: low, cmd: yay -Sc --noconfirm }
@@ -44,6 +45,7 @@ recipes:
 | `kind` | `dir` matches directory names, `file` matches file names, `path` points at literal paths |
 | `glob` | name glob for dir/file (`{a,b}` alternation); for path: absolute paths, `~`, `{mount}`, `*` per component, `\|` for several |
 | `markers` | files that must exist for a dir match: `CACHEDIR.TAG` inside it, `../Cargo.toml` beside it, `a\|b` for alternatives, globs allowed |
+| `not_under` | directory names that must not appear anywhere above a dir/file match
 | `risk` | `safe` items are pre-selected, `low` and `medium` wait for you |
 | `children` | path kind: offer every entry of the directory separately (`~/.cache`, `~/Downloads`) |
 | `min_size` `min_age` | only report entries at least this big (`100M`) or this old (days) |

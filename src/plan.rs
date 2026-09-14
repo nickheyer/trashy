@@ -3,6 +3,7 @@ use crate::scan::Scan;
 use crate::ui::w::{age, fmt_n};
 use std::{
     collections::{HashMap, HashSet},
+    os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     sync::{atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed}, Arc, Mutex},
 };
@@ -53,13 +54,19 @@ pub fn guard(p: &Path, mounts: &HashSet<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
-pub fn run(items: Vec<Item>, mode: Mode, mounts: HashSet<PathBuf>) -> Arc<Run> {
+fn writable(p: &Path) -> bool {
+    std::ffi::CString::new(p.as_os_str().as_bytes()).is_ok_and(|c| unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0)
+}
+
+pub fn run(mut items: Vec<Item>, mode: Mode, mounts: HashSet<PathBuf>) -> Arc<Run> {
+    items.sort_by_key(|i| !i.perm);
     let run = Arc::new(Run { total: items.len(), ..Default::default() });
     let r = run.clone();
     std::thread::spawn(move || {
         for it in items {
             *r.cur.lock().unwrap() = it.path.display().to_string();
             let res = guard(&it.path, &mounts).and_then(|_| {
+                if !it.path.parent().is_some_and(writable) { return Err(format!("{}: permission denied", it.path.display())); }
                 let is_dir = it.path.symlink_metadata().map(|m| m.is_dir()).map_err(|e| format!("{}: {e}", it.path.display()))?;
                 if mode == Mode::Delete || it.perm { if is_dir { std::fs::remove_dir_all(&it.path) } else { std::fs::remove_file(&it.path) }.map_err(|e| format!("{}: {e}", it.path.display())) }
                 else { trash::delete(&it.path).map_err(|e| format!("{}: {e}", it.path.display())) }
